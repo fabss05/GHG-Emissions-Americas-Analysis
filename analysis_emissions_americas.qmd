@@ -1,0 +1,1266 @@
+---
+title: "BIOSTAT FINAL CODE - ENGLISH"
+format: html
+editor: visual
+---
+
+# Initial Section: Study Population, Context, and Statistical Justification
+
+## Study Population and Context
+
+In this study, we reviewed how greenhouse gas (GHG) emissions changed in the Americas between 1990 and 2024. We used data from the EDGAR database (2025). We observed very different countries: from those with heavy industry to those that are growing, island nations, and those changing their energy use. Thus, we see the differences in emissions, how they change over time, and how they compare to their economic growth.
+
+We selected these 16 countries:
+
+-   **North America:** United States, Canada, Mexico
+-   **South America and the Caribbean:** Brazil, Argentina, Chile, Colombia, Peru, Ecuador, Venezuela, Cuba, Bolivia, Paraguay, Costa Rica, Panama, Dominican Republic
+
+Together, these countries account for more than 95% of the emissions of the entire continent. Thus, we have sufficient data to analyze and draw conclusions.
+
+For each country, we collected these data:
+
+-   Total emissions (Mt CO₂e)
+-   Emissions per person (t CO₂e/person)
+-   GHG intensity per unit of wealth produced (kg CO₂e/USD)
+
+With these data, we can analyze:
+
+-   Absolute volume (climate load on the atmosphere)
+-   Per capita responsibility (distributive justice)
+-   Carbon economic efficiency (energy productivity)
+
+The central objective of the study, titled “Evolution of GHG emissions in the Americas and their relationship with the Paris Agreement (1990–2024)”, is to determine if the entry into force of the Paris Agreement (2015) is associated with significant changes in the trajectories of absolute and relative emissions, evaluating evidence of decoupling, recoupling, or structural stagnation.
+
+# Loading, Cleaning, and Preparation of Panel Data
+
+This phase guarantees internal validity by standardizing data structures, eliminating inconsistencies, and preparing the information for time series and panel analysis (Country × Year).
+
+**Objective:** To ensure that each observation represents a unique statistical unit, without duplication or formatting errors, which is indispensable for any subsequent inferential test.
+
+## Installation and Loading of Packages
+
+We will use the readxl package to load the $\text{Excel}$ data and the tidyr package to transform it from wide to long format (Tidy Data), which is the standard format for time series and panel models in $\text{R}$.
+
+```{r}
+# List of required packages for data loading and transformation
+required_packages <- c("readxl", "tidyverse", "janitor", "kableExtra", "rstatix")
+
+# Check and install missing packages
+for (package in required_packages) {
+  if (!require(package, character.only = TRUE)) {
+    install.packages(package, dependencies = TRUE)
+    library(package, character.only = TRUE)
+  } else {
+    library(package, character.only = TRUE)
+  }
+}
+
+# The 'tidyverse' package includes 'ggplot2' (graphics) and 'dplyr' (manipulation).
+# 'janitor' helps clean up column names.
+# 'readxl' allows for easy reading of Excel files.
+```
+
+Specialized packages are used because:
+
+-   readxl guarantees importation without loss of precision.
+-   tidyverse standardizes operations under reproducible grammars.
+-   janitor enables uniform naming to avoid indexing errors.
+-   rstatix facilitates non-parametric tests and robust analyses, necessary due to the typical non-normality of emissions data.
+
+This ensures reproducibility, traceability, and the prevention of data handling errors.
+
+### Path Definition and Data Sheets
+
+Separating sheets by metric type (totals, per capita, GDP-intensity) avoids confusion between units, enables cross-validation, and allows for the integration of all variables under a panel scheme. This preserves dimensional integrity (measurements with different units) while ensuring comparability.
+
+```{r}
+# IMPORTANT! Replace this path with the exact path of your file.
+excel_path <- "D:/2025-2/bioestadistica/proyecto/EDGAR_2025_GHG_booklet_2025.xlsx"
+
+# Exact names of the Excel sheets
+data_sheets <- c(
+    "GHG_totals_by_country",
+    "GHG_per_capita_by_country",
+    "GHG_per_GDP_by_country"
+)
+
+# List of American countries (for filtering)
+countries_americas <- c(
+    "United States", "Canada", "Mexico", 
+    "Brazil", "Argentina", "Chile", "Colombia", "Peru", "Ecuador", 
+    "Venezuela", "Cuba", "Bolivia", "Paraguay", "Costa Rica", 
+    "Panama", "Dominican Republic"
+)
+```
+
+## Processing Functions
+
+The creation of a generic function avoids manual processing bias and ensures:
+
+-   Consistency in transformation
+-   Automation
+-   Reduction of human error
+-   Scalability if more countries are added
+
+The function guarantees a Tidy Data structure, a necessary condition for linear models, multivariate analysis, and panel data.
+
+```{r}
+process_ghg_data <- function(sheet_name, path, target_countries) {
+    
+    cat(paste("Processing sheet:", sheet_name, "\n"))
+    
+    # 1. Load the specific sheet
+    df <- read_excel(path, sheet = sheet_name) %>%
+        # 2. Clean column names (removes spaces, capitalization, etc.)
+        janitor::clean_names() %>%
+        # 3. Rename the 'country' column for consistency
+        rename(country = country) %>%
+        # 4. Filter only relevant American countries for the study
+        filter(country %in% target_countries)
+    
+    # Get the name of the main variable (e.g., 'ghg_per_gdp')
+    variable_name <- tolower(gsub("_by_country", "", sheet_name))
+
+    # 5. Transform from wide to long format (TIDY DATA)
+    # This is crucial: each row must be a unique observation (Country x Year)
+    df_long <- df %>%
+        select(-edgar_country_code) %>% # Remove the EDGAR code
+        # Pivot all year columns (numeric columns)
+        pivot_longer(
+            cols = starts_with("x19") | starts_with("x20"), # Selects columns starting with 'x19' or 'x20'
+            names_to = "year",
+            values_to = variable_name
+        ) %>%
+        # 6. Final cleanup of the 'year' column
+        mutate(
+            # Remove the leading 'x' (e.g., 'x1990' -> '1990')
+            year = as.integer(gsub("x", "", year)),
+            # Convert the main variable to numeric (if not already)
+            !!variable_name := as.numeric(!!rlang::sym(variable_name))
+        )
+    
+    return(df_long)
+}
+```
+
+### Execution of Processing and Data Combination
+
+```{r}
+# Apply the function to the three sheets and save them in a list
+ghg_data_list <- lapply(data_sheets, process_ghg_data, 
+                         path = excel_path, target_countries = countries_americas)
+
+# Combine the three long tables into a single large DataFrame
+# We use 'full_join' to merge by the keys 'country' and 'year'
+final_database <- ghg_data_list %>%
+    reduce(full_join, by = c("country", "year"))
+
+# Display structure of the combined database
+print("\nFinal structure of the combined database (TIDY DATA):")
+print(glimpse(final_database))
+```
+
+# 1. Descriptive Analysis: Normality and Distribution
+
+## Libraries
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(kableExtra) # For high-quality tables
+library(rstatix)    # For quick normality tests
+```
+
+## 1.1. Variable Preparation
+
+We create the categorical variable "Period" and ensure the factor levels follow a chronological order.
+
+```{r}
+df_analysis <- final_database %>%
+  mutate(
+    Period = case_when(
+      year <= 2015 ~ "Pre-Agreement (1990-2015)",
+      year > 2015  ~ "Post-Agreement (2016-2024)"
+    ),
+    Period = factor(Period, levels = c("Pre-Agreement (1990-2015)", "Post-Agreement (2016-2024)"))
+  )
+```
+
+## 1.2. Normality Assessment
+
+Before deciding whether to use means or medians, we must determine if the distribution is normal. We will use the Shapiro-Wilk test per country.
+
+```{r}
+normality_test <- df_analysis %>%
+  group_by(country) %>%
+  shapiro_test(ghg_totals) %>% # Assessing the main variable (Total Emissions)
+  adjust_pvalue(method = "bonferroni") %>%
+  mutate(is_normal = p > 0.05) # If p > 0.05, it is normal. Otherwise, it is skewed.
+
+print("Normality Test Results (Shapiro-Wilk):")
+print(normality_test)
+```
+
+NOTE: If the majority show "is_normal = FALSE", we justify the use of MEDIANS and WILCOXON tests.
+
+## 1.3. Table 1
+
+We generate a summary table with Median and IQR (Interquartile Range) separated by Period.
+
+```{r}
+descriptive_table <- df_analysis %>%
+  group_by(country, Period) %>%
+  summarise(
+    n = n(),
+    Mean = mean(ghg_totals, na.rm = TRUE),
+    SD = sd(ghg_totals, na.rm = TRUE),
+    Median = median(ghg_totals, na.rm = TRUE),
+    Q1 = quantile(ghg_totals, 0.25, na.rm = TRUE),
+    Q3 = quantile(ghg_totals, 0.75, na.rm = TRUE),
+    Min = min(ghg_totals, na.rm = TRUE),
+    Max = max(ghg_totals, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Display table in console (can be exported later to Excel/Word)
+print(head(descriptive_table))
+```
+
+### Optional: Save Table 1 as .tex
+
+```{r}
+latex_table <- descriptive_table %>%
+  kbl(format = "latex", booktabs = TRUE, digits = 2,
+      caption = "Table 1. Descriptive statistics of GHG emissions by period") %>%
+  kable_classic(full_width = FALSE)
+
+# Save LaTeX file
+save_kable(latex_table, "Table1_Descriptive.tex")
+```
+
+## 1.4. Graphical Analysis
+
+### Figure 1 - Time Series
+
+This plot is vital as it shows the historical trajectory. We use 'scales = "free_y"' because the US has scales significantly different from Panama.
+
+```{r}
+trend_plot <- ggplot(df_analysis, aes(x = year, y = ghg_totals)) +
+  # Trend line
+  geom_line(aes(color = country), size = 1, show.legend = FALSE) +
+  # Points for each year
+  geom_point(size = 1.5, alpha = 0.6) +
+  # Vertical line marking the Paris Agreement (2015)
+  geom_vline(xintercept = 2015, linetype = "dashed", color = "red", size = 0.8) +
+  geom_smooth(method = "loess", se = TRUE, fill = "gray80", alpha = 0.4, color = NA) +
+  # Soft shading for the Post-Agreement period
+  annotate("rect", xmin = 2015, xmax = 2024, ymin = -Inf, ymax = Inf, 
+           alpha = 0.1, fill = "green") +
+  # Separate by country with independent scales
+  facet_wrap(~country, scales = "free_y", ncol = 4) +
+  # Professional aesthetic (Theme BW)
+  theme_bw() +
+  labs(
+    title = "Figure 1: Evolution of Total GHG Emissions (1990-2024)",
+    subtitle = "The red line indicates the signing of the Paris Agreement (2015). The green area represents the implementation period.",
+    y = "Total Emissions (Mt CO2eq)",
+    x = "Year"
+  ) +
+  theme(
+    strip.text = element_text(face = "bold", size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# Display the plot
+print(trend_plot)
+```
+
+This visualization serves as the initial and fundamental diagnostic for the Interrupted Time Series (ITS) analysis. The use of facets with free scales justifies the Fixed Effects Model by confirming the marked heterogeneity of emission trajectories between countries. The vertical line at $2015$ marks the intervention point of the Paris Agreement, allowing for a preliminary visual assessment before the inferential quantification of level and slope changes in emissions.
+
+### Figure 2 - Comparative Boxplots
+
+To visually assess if the "boxes" (distributions) shifted up or down in level.
+
+```{r}
+boxplot_plot <- ggplot(df_analysis, aes(x = Period, y = ghg_totals, fill = Period)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  # Add jittered points to see the actual data behind the box
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1) +
+  facet_wrap(~country, scales = "free_y", ncol = 4) +
+  scale_fill_manual(values = c("gray70", "#00BFC4")) +
+  theme_bw() +
+  labs(
+    title = "Figure 2: Emission Distribution Pre vs. Post Paris Agreement",
+    y = "Total Emissions (Mt CO2eq)",
+    x = ""
+  ) +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_blank(), # Remove X-axis text as it's in the legend
+    strip.text = element_text(size = 9)
+  )
+print(boxplot_plot)
+```
+
+This plot is a bivariate diagnostic visualization that assesses the level change between two distinct periods ($\text{Pre}$ vs. $\text{Post}$). The use of boxplots segmented by country (facets with free scales) allows for a visual evaluation of the distribution ($\text{median, range, quartiles}$) and the magnitude of change ($\text{Post} - \text{Pre}$) in emissions for each unit, adjusting the scale to its intrinsic heterogeneity. The superposition of jittered points provides a robust verification of data density and the presence of outliers, complementing the formal statistical test ($\text{t-test/Wilcoxon}$) performed.
+
+# 2. Bivariate Analysis
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(rstatix)  # Current standard library for tidy biostatistics
+library(ggpubr)   # For publication-ready graphics
+library(scales)
+library(patchwork)
+library(ggrepel)
+library(broom)
+```
+
+## 2.1. Data Preparation
+
+We ensure that 'Period' is an ordered factor. We use 'ghg_totals' to evaluate the absolute impact.
+
+```{r}
+df_bivariate <- final_database %>%
+  filter(country %in% countries_americas) %>%
+  mutate(
+    Period = case_when(
+      year <= 2015 ~ "Pre-Paris",
+      year > 2015  ~ "Post-Paris"
+    ),
+    Period = factor(Period, levels = c("Pre-Paris", "Post-Paris"))
+  )
+```
+
+## 2.2. Test Execution
+
+We use the Wilcoxon Rank Sum Test. H0: The median emissions Pre and Post are equal. H1: The median has changed (increased or decreased).
+
+```{r}
+bivariate_stats <- df_bivariate %>%
+  group_by(country) %>%
+  wilcox_test(ghg_totals ~ Period) %>%
+  adjust_pvalue(method = "bonferroni") %>% # Adjustment for multiple comparisons
+  add_significance() %>%
+  add_xy_position(x = "Period") # Prepare coordinates for plotting p-values
+print(bivariate_stats)
+```
+
+## 2.3. Calculation of Magnitude of Change (Delta)
+
+```{r}
+# We calculate the percentage change in medians.
+median_summary <- df_bivariate %>%
+  group_by(country, Period) %>%
+  summarise(Median = median(ghg_totals, na.rm = TRUE), .groups = 'drop') %>%
+  pivot_wider(names_from = Period, values_from = Median) %>%
+  mutate(
+    # Percentage change formula
+    Pct_Change = (`Post-Paris` - `Pre-Paris`) / `Pre-Paris` * 100,
+    Direction = ifelse(Pct_Change > 0, "Increase", "Reduction")
+  )
+
+# Join with the statistical test results
+final_bivariate_table <- median_summary %>%
+  left_join(bivariate_stats, by = "country") %>%
+  select(country, `Pre-Paris`, `Post-Paris`, Pct_Change, Direction, p, p.adj, p.adj.signif) %>%
+  arrange(Pct_Change) # Order from greatest reduction to greatest increase
+
+# PRINT TABLE
+print("Table 2: Comparative Emissions Analysis (Pre vs Post Paris Agreement)")
+print(as.data.frame(final_bivariate_table))
+```
+
+## 2.4. Results Visualization (Simplified Forest Plot)
+
+A dot plot showing how much each country changed and if it is significant.
+
+```{r}
+bivariate_plot <- ggplot(final_bivariate_table, 
+                            aes(x = reorder(country, Pct_Change), 
+                                y = Pct_Change, 
+                                color = p.adj.signif)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  # Lollipop lines
+  geom_segment(aes(x = reorder(country, Pct_Change), xend = reorder(country, Pct_Change), 
+                   y = 0, yend = Pct_Change), color = "gray80", size = 1) +
+  # Main points
+  geom_point(size = 5) +
+  # Traffic light color scale
+  scale_color_manual(values = c("ns" = "gray", "*" = "orange", "**" = "red", "***" = "darkred", "****" = "black"),
+                     labels = c("Non Sig.", "p < 0.05", "p < 0.01", "p < 0.001", "p < 0.0001")) +
+  coord_flip() + # Rotate to see country names
+  theme_classic() +
+  labs(
+    title = "Percentage Change in Emission Medians (Bivariate Phase)",
+    subtitle = "Unadjusted Comparison (Raw Data). Wilcoxon Test.",
+    x = "",
+    y = "Median Percentage Change (%)",
+    color = "Significance\n(Adjusted)"
+  )
+
+print(bivariate_plot)
+```
+
+This graph is a diagnostic summary of multiple Wilcoxon tests evaluating the change in median emissions ($\text{Pre}$ vs. $\text{Post}$ $2015$). The line at zero marks the null hypothesis of no change, while the $\text{Y}$ axis quantifies the effect magnitude ($\text{Percentage Change}$). The color of the point indicates adjusted significance ($\text{p.adj.signif}$), correcting for Type I error inflation due to multiple comparisons. The visualization allows for quick prioritization of countries where the median change is statistically reliable and its direction (increase or reduction).
+
+## Advanced Clustering (MAGNITUDE + TREND)
+
+```{r}
+# 1. DATA VERIFICATION
+
+# If data is not loaded, this block warns you.
+if (!exists("df_analysis")) {
+  stop("ALERT! You must first run the DATA LOADING block (the first one in the script).")
+}
+
+# 2. ADVANCED MATHEMATICAL CALCULATION
+
+# We calculate Magnitude (Average) and Trend (Post-2015 Slope)
+advanced_cluster_data <- df_analysis %>%
+  group_by(country) %>%
+  summarise(
+    # A) Historical Magnitude
+    Magnitude = mean(ghg_totals, na.rm = TRUE),
+    
+    # B) Recent Trend (2015-2024): Detects increase or collapse
+    Trend = coef(lm(ghg_totals ~ year, data = pick(everything()) %>% filter(year >= 2015)))[2]
+  ) %>%
+  ungroup()
+
+# 3. STANDARDIZATION AND K-MEANS (K=5)
+
+# Standardize so Magnitude (thousands) and Trend (units) carry equal weight
+data_scaled <- advanced_cluster_data %>%
+  column_to_rownames("country") %>%
+  scale()
+
+set.seed(123)
+# We use 5 centers to allow space for Venezuela and the USA to separate
+kmeans_result <- kmeans(data_scaled, centers = 5, nstart = 25)
+
+advanced_cluster_data$cluster_id <- kmeans_result$cluster
+
+# 4. SMART AUTOMATIC LABELING
+
+# The algorithm decides the group name based on the numbers
+cluster_labels <- advanced_cluster_data %>%
+  group_by(cluster_id) %>%
+  summarise(
+    Mean_Mag = mean(Magnitude),
+    Mean_Tend = mean(Trend)
+  ) %>%
+  mutate(Label = case_when(
+    # VENEZUELA CASE: Very negative slope (< -10) but not a giant
+    Mean_Tend < -10 & Mean_Mag < 2000 ~ "Anomalous Cluster (Collapse)",
+    
+    # USA CASE: Giant magnitude
+    Mean_Mag > 4000 ~ "Industrial Power Cluster (Decoupling)",
+    
+    # BRAZIL CASE: High magnitude and rising
+    Mean_Mag > 800 ~ "Emerging Giant Cluster",
+    
+    # MEXICO/CANADA CASE: Mild negative slope or stable
+    Mean_Tend <= 0 ~ "Transition / Stabilization Cluster",
+    
+    # OTHERS: Still rising
+    TRUE ~ "Continuous Growth Cluster"
+  ))
+
+# Join everything to the main database
+plot_df <- df_analysis %>%
+  left_join(advanced_cluster_data %>% select(country, cluster_id), by = "country") %>%
+  left_join(cluster_labels %>% select(cluster_id, Label), by = "cluster_id")
+
+label_data <- plot_df %>% filter(year == max(year))
+p_math <- ggplot(plot_df, aes(x = year, y = ghg_totals, group = country, color = country)) +
+  
+  # Paris reference line
+  geom_vline(xintercept = 2015, linetype = "dashed", color = "gray50", linewidth = 0.8) +
+  geom_smooth(aes(group = Label), method = "loess", se = TRUE, fill = "gray80", alpha = 0.4, color = "black", linetype = "dotted", linewidth = 0.5) +
+  # Country lines
+  geom_line(linewidth = 1.2, alpha = 0.85) +
+  geom_point(data = label_data, size = 3) +
+  
+  # Non-overlapping labels
+  geom_text_repel(data = label_data, 
+                  aes(label = country), 
+                  size = 4, 
+                  fontface = "bold", 
+                  nudge_x = 3, 
+                  direction = "y", 
+                  segment.size = 0.5,
+                  force = 2) +
+  
+  # MAGIC FACETS (Separated by mathematical behavior)
+  facet_wrap(~Label, scales = "free_y", ncol = 2) + 
+  
+  # Professional Aesthetic
+  scale_color_viridis_d(option = "turbo") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Regional Heterogeneity: Classification by Magnitude and Trend (1990-2024)",
+    subtitle = "The K-Means algorithm mathematically separates 'Collapse' (Venezuela) and 'Decoupling' (USA).",
+    y = "Total Emissions (Mt CO2eq)",
+    x = NULL,
+    caption = "Source: Own analysis with EDGAR v8.0 data | Algorithm: K-Means (Inputs: Historical Average + Post-2015 Slope)"
+  ) +
+  theme(
+    legend.position = "none", 
+    plot.margin = margin(10, 12, 10, 12)
+  ) +
+  scale_x_continuous(limits = c(1990, 2032), breaks = seq(1990, 2025, 10))
+
+print(p_math)
+```
+
+# 3. Multivariate Analysis
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(broom)   # To clean statistical results
+library(ggplot2)
+```
+
+## 3.1. Variable Preparation
+
+We need to calculate total GDP and total Population, and then apply Logarithms.
+
+```{r}
+df_multivariate <- final_database %>%
+  filter(country %in% countries_americas) %>%
+  # Ensure there are no zeros to avoid errors in logarithms
+  filter(ghg_totals > 0, ghg_per_capita > 0, ghg_per_gdp > 0) %>%
+  mutate(
+    # 1. Derive absolute variables (Reverse engineering of ratios)
+    # Population = Total Emissions / Emissions per Capita
+    Calculated_Population = ghg_totals / ghg_per_capita,
+    
+    # Total GDP (Proxy) = Total Emissions / Emissions per GDP
+    Calculated_GDP = ghg_totals / ghg_per_gdp,
+    
+    # 2. Logarithmic Transformation (To interpret coefficients as elasticities)
+    log_Emissions = log(ghg_totals),
+    log_GDP = log(Calculated_GDP),
+    log_Pop = log(Calculated_Population),
+    
+    # 3. Period Dummy Variable (0 = Pre, 1 = Post)
+    Post_Paris = ifelse(year > 2015, 1, 0)
+  )
+print(df_multivariate)
+```
+
+## 3.2. Model Execution (One model per country)
+
+We use 'nest' and 'map' to run 16 regressions in a single step.
+
+```{r}
+fitted_models <- df_multivariate %>%
+  group_by(country) %>%
+  nest() %>%
+  mutate(
+    # The magic formula: Emissions controlling for GDP and Population
+    model = map(data, ~ lm(log_Emissions ~ Post_Paris + log_GDP + log_Pop, data = .x)),
+    # Extract clean coefficients
+    tidied = map(model, tidy),
+    # Extract confidence intervals
+    conf_int = map(model, confint_tidy)
+  ) %>%
+  unnest(c(tidied, conf_int)) %>%
+  # Filter only the coefficient of interest: "Post_Paris"
+  filter(term == "Post_Paris") %>%
+  ungroup()
+
+print(fitted_models)
+```
+
+## 3.3. Interpretation of Results
+
+We transform logarithmic coefficients into real percentage changes.
+
+```{r}
+multivariate_table <- fitted_models %>%
+  mutate(
+    # Formula: (e^beta - 1) * 100
+    Adjusted_Change_Pct = (exp(estimate) - 1) * 100,
+    
+    # Final Classification
+    Conclusion = case_when(
+      p.value >= 0.05 ~ "No Change (Baseline Trend)",
+      estimate < 0 ~ "Decoupling / Real Reduction",  # Policy success
+      estimate > 0 ~ "Inefficient Increase"          # Policy failure
+    ),
+    
+    # Significance stars for the plot
+    Significance = case_when(
+      p.value < 0.001 ~ "***",
+      p.value < 0.01 ~ "**",
+      p.value < 0.05 ~ "*",
+      TRUE ~ "ns"
+    )
+  ) %>%
+  select(country, estimate, p.value, conf.low, conf.high, Adjusted_Change_Pct, Conclusion, Significance) %>%
+  arrange(Adjusted_Change_Pct)
+
+# Print table for the report
+print("Table 3: Adjusted Impact of the Paris Agreement (Controlling for GDP and Population)")
+print(as.data.frame(multivariate_table))
+```
+
+## 3.4. Final Visualization (Forest plot - Figure 3)
+
+This multivariate analysis graph synthesizes the results of $16$ independent $\text{OLS}$ regressions, inferring the net effect of the Paris Agreement on emissions after controlling for $\text{GDP}$ and $\text{Population}$. The coefficient ($\text{estimate}$) represents the elasticity or adjusted percentage change of post-$2015$ emissions. The Confidence Interval ($\text{95\% CI}$), relative to the null hypothesis ($\text{y}=0$), evaluates individual significance. The plot provides a quick diagnostic of policy efficacy ($\text{Decoupling/Reduction}$) or failure ($\text{Inefficient Increase}$) adjusted by primary socioeconomic drivers.
+
+```{r}
+multivariate_plot <- ggplot(multivariate_table, 
+                               aes(x = reorder(country, estimate), 
+                                   y = estimate, 
+                                   color = Conclusion)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  # Confidence Intervals
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, size = 0.8) +
+  # Central points
+  geom_point(size = 3.5) +
+  # Significance labels
+  geom_text(aes(label = Significance), vjust = -0.5, show.legend = FALSE) +
+  
+  coord_flip() +
+  scale_color_manual(values = c("Inefficient Increase" = "#E41A1C", 
+                                "Decoupling / Real Reduction" = "#377EB8", 
+                                "No Change (Baseline Trend)" = "gray50")) +
+  theme_bw() +
+  labs(
+    title = "Net Effect of the Paris Agreement on GHG Emissions",
+    subtitle = "Adjusted Regression Coefficient (95% CI) | Controlling for GDP and Population",
+    y = "Log Coefficient (Negative = Net Reduction)",
+    x = "",
+    color = "Interpretation"
+  ) +
+  theme(legend.position = "bottom")
+
+print(multivariate_plot)
+```
+
+Furthermore, it can be observed that countries with decoupling (blue) or increase (red) present statistically significant results (p-values $< 0.05$).
+
+# 4. Mechanism Analysis (Sectors)
+
+Objective: Explain regression results by identifying the dominant sector.
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(readxl)
+```
+
+## 4.1. Sectoral Data Loading
+
+The United States, Mexico, Brazil, Panama, Colombia, and Venezuela were selected for the sectoral analysis.
+
+```{r}
+sector_sheet <- "GHG_by_sector_and_country"
+df_sectors_raw <- read_excel(excel_path, sheet = sector_sheet) %>%
+  janitor::clean_names() %>%
+  rename(country = country, Sector = sector) %>%
+  filter(country %in% c("United States", "Mexico", "Brazil", "Panama", "Colombia", "Venezuela")) 
+```
+
+The selection of these six nations constitutes a stratified sampling based on the variance of the five identified clusters to guarantee panel representativeness. Units with significant coefficients ($p < 0.05$) were prioritized to ensure that the sectoral analysis explains real changes in efficiency rather than random fluctuations.
+
+By including success benchmarks, deviant cases, and structural collapses, the causal mechanisms of energy transition are contrasted against political inefficiency. This methodological strategy validates the study by covering the full spectrum of emission trajectories in the Americas.
+
+## 4.2. Processing
+
+```{r}
+df_sectors <- df_sectors_raw %>%
+  select(-edgar_country_code, -substance) %>% # Remove extra non-numeric columns
+  pivot_longer(
+    cols = starts_with("x19") | starts_with("x20"),
+    names_to = "year",
+    values_to = "Emissions"
+  ) %>%
+  mutate(
+    year = as.integer(gsub("x", "", year)),
+    Period = ifelse(year <= 2015, "Pre-2015", "Post-2015")
+  )
+```
+
+## 4.3. Calculate Average per Sector and Period
+
+This tells us: "On average, how much did Transport emit before vs. now?"
+
+```{r}
+sector_summary <- df_sectors %>%
+  group_by(country, Sector, Period) %>%
+  summarise(Average_Emissions = mean(Emissions, na.rm = TRUE), 
+            se = sd(Emissions, na.rm = TRUE) / sqrt(n()), 
+            .groups = "drop") %>%
+  # Calculate percentage to see "Composition"
+  group_by(country, Period) %>%
+  mutate(Percentage = Average_Emissions / sum(Average_Emissions) * 100)
+print(sector_summary)
+```
+
+## 4.4. Stacked Bar Chart (Figure 4)
+
+Shows how each country's emission matrix has changed.
+
+```{r}
+sector_plot <- ggplot(sector_summary, 
+                           aes(x = Period, y = Average_Emissions, fill = Sector)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~country, scales = "free_y", ncol = 3) + # Free scales because USA is giant
+  theme_bw() +
+  scale_fill_brewer(palette = "Set2") + # Distinguishable color palette
+  labs(
+    title = "Figure 4: Change in Sectoral Emission Composition",
+    subtitle = "Comparison of Pre and Post Paris Agreement averages",
+    y = "Average Emissions (Mt CO2eq)",
+    x = "",
+    fill = "Economic Sector"
+  ) +
+  theme(legend.position = "bottom")
+
+print(sector_plot)
+```
+
+-   **United States (The Benchmark / Global North):**
+
+    -   *Role:* **Positive Control.**.
+
+    -   *Why:* A developed economy that has already passed its industrial peak. Phase 3 showed a **real reduction (-11.5%)**.
+
+    -   *What to look for:* You will likely see its reduction is driven by the shrinking of the "Power Industry" bar (shift from Coal to Gas/Renewables).
+
+-   **Brazil and Mexico (Regional Powers):**
+
+    -   *Role:* **Large Emerging Economies.**.
+
+    -   *Why:* The largest emitters in Latin America. Both showed **Decoupling (-2.3% and -9%)** in Phase 3.
+
+    -   *What to look for:* We want to see if their efficiency comes from industry or if (in Brazil's case) the agricultural/LULUCF sector remains a heavy burden.
+
+-   **Panama (Sustainability Models)::**
+
+    -   *Role:* **Success in Services and Clean Energy.**
+
+    -   *Why:* High-growth economies with notable adjusted reductions.
+
+    -   *What to look for:* In **Panama**, the absence of heavy industry. The **"Power Industry"** bar should be minimal, validating different paths toward efficiency.
+
+-   **Colombia (The Alert / Deviant Case):**
+
+    -   *Role:* **Negative Case ("Outlier")**.
+
+    -   *Why:* The **only major** country that showed an **Inefficient Increase (+4.6%)** in Phase 3.
+
+    -   *What to look for:* This is the most critical to explain. Why did its inefficiency rise? Did the "Transport" bar grow? Or "Agriculture"? The graph provides the culprit.
+
+-   **Venezuela (The False Positive / Collapse):**
+
+    -   *Role:* **Outlier due to Systemic Crisis.**
+
+    -   *Why:* Shows a drastic reduction in emissions, but linked to GDP collapse rather than policy efficiency.
+
+    -   *What to look for:* The collapse of "Manufacturing" and "Power Industry" bars. It is a biostatistical warning: emission reduction without growth is not decoupling, but regression.
+
+## 4.5. 2030 Predictions with Confidence Intervals (Figure 5)
+
+```{r}
+# 1. COUNTRY SELECTION
+focus_countries <- c("United States", "Colombia", "Brazil", "Panama", "Mexico", "Venezuela")
+
+# 2. FILTER DATA (Recent Trend 2016-2024)
+trend_df <- final_database %>%
+  filter(country %in% focus_countries) %>%
+  filter(year >= 2016)
+
+# 3. MODELING AND PREDICTION WITH INTERVALS
+future_years <- tibble(year = 2025:2030)
+
+predictions <- trend_df %>%
+  group_by(country) %>%
+  nest() %>%
+  mutate(
+    # Fit linear model
+    model = map(data, ~lm(ghg_totals ~ year, data = .x)),
+    # Generate predictions including Confidence Interval (95%)
+    projection = map(model, ~broom::augment(.x, newdata = future_years, interval = "confidence"))
+  ) %>%
+  unnest(projection) %>%
+  select(country, year, .fitted, .lower, .upper)
+
+# 4. EVALUATE STATUS VS 2015 (Baseline)
+base_2015 <- final_database %>%
+  filter(year == 2015, country %in% focus_countries) %>%
+  select(country, base_value = ghg_totals)
+
+classification <- predictions %>%
+  filter(year == 2030) %>%
+  left_join(base_2015, by = "country") %>%
+  mutate(
+    Change_2030 = (.fitted - base_value) / base_value * 100,
+    Final_Label = paste0(ifelse(Change_2030 > 0, "+", ""), round(Change_2030, 1), "% vs 2015"),
+    Status_Color = ifelse(Change_2030 < 0, "Complies (Reduction)", "Does Not Comply (Increase)")
+  )
+
+plot_data <- predictions %>%
+  left_join(classification %>% select(country, Status_Color), by = "country")
+
+# 5. PLOT
+prediction_plot <- ggplot() +
+  
+  # --- A. HISTORY (Solid Gray Line) ---
+  geom_line(data = final_database %>% filter(country %in% focus_countries, year >= 2010),
+            aes(x = year, y = ghg_totals), size = 1.2, color = "gray40") +
+  
+  # --- B. UNCERTAINTY (The Shadow/Interval) ---
+  geom_ribbon(data = plot_data, 
+              aes(x = year, ymin = .lower, ymax = .upper, fill = Status_Color), 
+              alpha = 0.2) + 
+  
+  # --- C. MEAN PROJECTION (Dashed Line) ---
+  geom_line(data = plot_data, 
+            aes(x = year, y = .fitted, color = Status_Color), 
+            size = 1.2, linetype = "dashed") +
+  
+  # --- D. 2015 REFERENCE (White Diamond) ---
+  geom_point(data = base_2015, aes(x = 2015, y = base_value), 
+             shape = 23, size = 3, fill = "white", stroke = 1.5) +
+  
+  # --- E. TEXT LABEL ---
+  geom_text(data = classification, 
+            aes(x = 2028, y = .fitted, label = Final_Label, color = Status_Color),
+            vjust = -1.5, fontface = "bold", size = 4) +
+
+  # --- F. PANELS ---
+  facet_wrap(~country, scales = "free_y", ncol = 3) +
+  
+  # --- G. AESTHETICS ---
+  scale_fill_manual(values = c("Does Not Comply (Increase)" = "#c0392b", "Complies (Reduction)" = "#27ae60")) +
+  scale_color_manual(values = c("Does Not Comply (Increase)" = "#c0392b", "Complies (Reduction)" = "#27ae60")) +
+  
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Inertial Projection to 2030 with Confidence Intervals (95%)",
+    subtitle = "Trajectory based on current policies (2016-2024) vs. 2015 Baseline",
+    y = "Emissions (Mt CO2eq)", x = "",
+    caption = "Shade: 95% CI. Gray line: History. Dashed: Projection. Diamond: 2015 base year.",
+    color = "Status", fill = "Status"
+  ) + 
+  theme(
+    legend.position = "bottom"
+  )
+
+print(prediction_plot)
+```
+
+# Relevant Graphics
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(scales)
+library(patchwork)
+library(ggrepel)
+library(broom)
+```
+
+## Common Configuration
+
+```{r}
+poster_theme <- theme_minimal(base_size = 16) + # Large base font for poster
+  theme(
+    plot.title = element_text(face = "bold", size = 20, color = "#2c3e50"),
+    plot.subtitle = element_text(size = 14, color = "gray40"),
+    axis.text = element_text(size = 12, color = "black"),
+    axis.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold", size = 14)
+  )
+```
+
+## FIGURE 1: TRENDS (The Physical Reality)
+
+```{r}
+p1 <- ggplot(df_analysis, aes(x = year, y = ghg_totals)) +
+  geom_line(aes(group = country), color = "gray80", size = 0.8) + # Gray background
+  # Highlight regional average or key countries
+  geom_smooth(aes(group = 1), method = "loess", color = "#e74c3c", size = 2, se = FALSE) +
+  geom_vline(xintercept = 2015, linetype = "dashed", color = "black", size = 1) +
+  annotate("text", x = 2016, y = max(df_analysis$ghg_totals)*0.9, 
+             label = "Paris Agreement", hjust = 0, fontface = "italic") +
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale())) +
+  labs(title = "Fig 1. Emission Trajectory (1990-2024)",
+        subtitle = "Upward trend despite the agreement (Red line: Smoothed average)",
+        y = "Mt CO2eq", x = "Year") +
+  poster_theme + 
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+print(p1)
+
+# Save
+ggsave("Fig1_Trends_Poster.png", p1, width = 12, height = 8, dpi = 300)
+```
+
+## FIGURE 1.1: ADVANCED CLUSTERING (MAGNITUDE + TREND)
+
+```{r}
+label_data <- plot_df %>% filter(year == max(year))
+p_math <- ggplot(plot_df, aes(x = year, y = ghg_totals, group = country, color = country)) +
+  
+  # Paris reference line
+  geom_vline(xintercept = 2015, linetype = "dashed", color = "gray50", linewidth = 0.8) +
+  geom_smooth(aes(group = Label), method = "loess", se = TRUE, fill = "gray80", alpha = 0.4, color = "black", linetype = "dotted", linewidth = 0.5) +
+  # Country lines
+  geom_line(linewidth = 1.2, alpha = 0.85) +
+  geom_point(data = label_data, size = 3) +
+  
+  # Non-overlapping labels
+  geom_text_repel(data = label_data, 
+                  aes(label = country), 
+                  size = 4, 
+                  fontface = "bold", 
+                  nudge_x = 3, 
+                  direction = "y", 
+                  segment.size = 0.5,
+                  force = 2) +
+  
+  # MAGIC FACETS (Separated by mathematical behavior)
+  facet_wrap(~Label, scales = "free_y", ncol = 2) + 
+  
+  # Professional Aesthetic
+  scale_color_viridis_d(option = "turbo") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Regional Heterogeneity: Classification by Magnitude and Trend (1990-2024)",
+    subtitle = "The K-Means algorithm mathematically separates 'Collapse' (Venezuela) and 'Decoupling' (USA).",
+    y = "Total Emissions (Mt CO2eq)",
+    x = NULL,
+    caption = "Source: Own analysis with EDGAR v8.0 data | Algorithm: K-Means (Inputs: Historical Average + Post-2015 Slope)"
+  ) +
+  theme(
+    legend.position = "none", 
+    strip.background = element_rect(fill = "#2c3e50", color = NA),
+    strip.text = element_blank(),
+    plot.title = element_text(face = "bold", size = 15, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    plot.margin = margin(10, 12, 10, 12)
+  ) +
+  scale_x_continuous(limits = c(1990, 2032), breaks = seq(1990, 2025, 10))
+
+# Save image
+ggsave("Fig1.1_Cluster_Trends_Final.png", 
+       plot = p_math, 
+       width = 14, 
+       height = 10, 
+       dpi = 300)
+
+print(p_math)
+```
+
+Venezuela is a statistical anomaly: it is the only country with medium magnitude but a strongly negative slope (collapse), automatically separating it from countries like Colombia that have similar magnitude but a positive slope.
+
+## FIGURE 2.1: BIVARIATE ANALYSIS (Lollipop Chart)
+
+```{r}
+p2 <- ggplot(final_bivariate_table, aes(x = reorder(country, Pct_Change), y = Pct_Change)) +
+  geom_segment(aes(xend = country, yend = 0), color = "gray70", size = 1.2) +
+  geom_point(aes(color = Pct_Change > 0), size = 5) +
+  geom_text(aes(label = paste0(round(Pct_Change, 1), "%")), 
+                hjust = -0.3, size = 4, fontface = "bold") +
+  scale_color_manual(values = c("TRUE" = "#e74c3c", "FALSE" = "#27ae60"), 
+                       labels = c("Reduction", "Increase")) +
+  coord_flip() +
+  labs(title = "Raw Change (Unadjusted)",
+        subtitle = "Did total emissions increase? (Wilcoxon Test)",
+        y = "% Change in Median", x = "", color = "Direction") +
+  poster_theme +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+p2 <- p2 +
+  coord_flip(clip = "off") +
+  theme(
+    plot.margin = margin(20, 120, 20, 20), # more space to the right
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+print(p2)
+
+# Save
+ggsave("Fig2.1_Bivariate_Poster.png", p2, width = 8, height = 10, dpi = 300)
+```
+
+## FIGURE 2.2 ADJUSTED: ADJUSTED CHANGE (Multivariate Model)
+
+```{r}
+p2_adjusted <- ggplot(multivariate_table, 
+                      aes(x = reorder(country, Adjusted_Change_Pct), 
+                          y = Adjusted_Change_Pct)) +
+  
+  # Base segment
+  geom_segment(aes(xend = country, yend = 0), 
+               color = "gray70", size = 1.2) +
+  
+  # Point colored by increase / reduction
+  geom_point(aes(color = Adjusted_Change_Pct > 0), size = 5) +
+  
+  # Numeric labels
+  geom_text(aes(label = paste0(round(Adjusted_Change_Pct, 1), "%")), 
+            hjust = -0.3, size = 4, fontface = "bold") +
+  
+  # Colors: red if increase, green if reduction
+  scale_color_manual(values = c("TRUE" = "#e74c3c", "FALSE" = "#27ae60"),
+                       labels = c("Reduction", "Increase")) +
+  
+  coord_flip(clip = "off") +
+  
+  labs(
+    title = "Adjusted Change (Multivariate Model)",
+    subtitle = "Adjusted for structural covariates (multivariate linear model)",
+    y = "% Adjusted Change", 
+    x = "", 
+    color = "Direction"
+  ) +
+  
+  poster_theme +
+  theme(legend.position = "none")
+
+p2_adjusted <- p2_adjusted +
+  coord_flip(clip = "off") +
+  theme(
+    plot.margin = margin(20, 120, 20, 20),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+print(p2_adjusted)
+
+# Save
+ggsave("Fig2.2_Adjusted_Poster.png", p2_adjusted, width = 8, height = 10, dpi = 300)
+```
+
+## FIGURE 2.3: COMBINED CHANGES
+
+```{r}
+safe_margin_theme <- theme(
+  plot.margin = margin(20, 40, 20, 20)
+)
+
+p2 <- p2 + safe_margin_theme
+p2_adjusted <- p2_adjusted + safe_margin_theme
+
+# Combine
+fig2_combined <- p2 | p2_adjusted +
+  plot_annotation(
+    title = "Fig 2. Raw and Adjusted Changes in Total Emissions",
+    theme = theme(
+      plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+      plot.margin = margin(10, 10, 10, 10)
+    )
+  ) &
+  theme(plot.margin = margin(20, 40, 20, 20))
+
+print(fig2_combined)
+
+# Save
+ggsave(
+  "Fig2.3_Combined_Poster.png",
+  fig2_combined,
+  width = 20,
+  height = 22,
+  dpi = 300
+)
+```
+
+## FIGURE 3: MULTIVARIATE ANALYSIS (Forest Plot)
+
+```{r}
+p3 <- ggplot(multivariate_table, aes(x = reorder(country, estimate), y = estimate, color = Conclusion)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black", size = 0.8) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.3, size = 1) +
+  geom_point(size = 4) +
+  coord_flip() +
+  scale_color_manual(values = c("Inefficient Increase" = "#e74c3c", 
+                                "Decoupling / Real Reduction" = "#2980b9", 
+                                "No Change (Baseline Trend)" = "gray60")) +
+  labs(title = "Net Efficiency (Adjusted)",
+        subtitle = "Net effect of the Agreement controlling for GDP and Population",
+        y = "Log Coefficient (Negative = Greater Efficiency)", x = "", color = "") +
+  poster_theme +
+  theme(legend.position = "top", legend.text = element_text(size = 11))
+
+p3 <- p3 +
+coord_flip(clip = "off") +
+theme(
+  plot.margin = margin(20, 100, 20, 20),
+  plot.title = element_text(hjust = 0.5),
+  plot.subtitle = element_text(hjust = 0.5)
+)
+
+print(p3)
+
+# Save
+ggsave("Fig3_Multivariate_Poster.png", p3, width = 10, height = 12, dpi = 300)
+```
+
+# FIGURE 4: SECTORAL MECHANISMS (Stacked Bars)
+
+```{r}
+p4 <- ggplot(sector_summary, aes(x = Period, y = Percentage, fill = Sector)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  facet_wrap(~country, nrow = 1) +
+  scale_fill_brewer(palette = "Paired") +
+  labs(title = "What drives the change?",
+        subtitle = "Sectoral composition of emissions (Pre vs Post)",
+        y = "% of Total", x = "") +
+  poster_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+print(p4)
+
+# Save
+ggsave("Fig4_Sectors_Poster.png", p4, width = 14, height = 8, dpi = 300)
+```
+
+## FIGURE 5: 2030 PREDICTIONS WITH CONFIDENCE INTERVALS
+
+```{r}
+p_prediction <- ggplot() +
+  
+  # --- A. HISTORY (Solid Gray Line) ---
+  geom_line(data = final_database %>% filter(country %in% focus_countries, year >= 2010),
+            aes(x = year, y = ghg_totals), size = 1.2, color = "gray40") +
+  
+  # --- B. UNCERTAINTY (Shadow/Interval) ---
+  geom_ribbon(data = plot_data, 
+              aes(x = year, ymin = .lower, ymax = .upper, fill = Status_Color), 
+              alpha = 0.2) + 
+  
+  # --- C. MEAN PROJECTION (Dashed Line) ---
+  geom_line(data = plot_data, 
+            aes(x = year, y = .fitted, color = Status_Color), 
+            size = 1.2, linetype = "dashed") +
+  
+  # --- D. 2015 REFERENCE (White Diamond) ---
+  geom_point(data = base_2015, aes(x = 2015, y = base_value), 
+             shape = 23, size = 3, fill = "white", stroke = 1.5) +
+  
+  # --- E. TEXT LABEL ---
+  geom_text(data = classification, 
+            aes(x = 2028, y = .fitted, label = Final_Label, color = Status_Color),
+            vjust = -1.5, fontface = "bold", size = 4) +
+
+  # --- F. PANELS ---
+  facet_wrap(~country, scales = "free_y", ncol = 3) +
+  
+  # --- G. AESTHETICS ---
+  scale_fill_manual(values = c("Does Not Comply (Increase)" = "#c0392b", "Complies (Reduction)" = "#27ae60")) +
+  scale_color_manual(values = c("Does Not Comply (Increase)" = "#c0392b", "Complies (Reduction)" = "#27ae60")) +
+  
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Inertial Projection to 2030 with Confidence Intervals (95%)",
+    subtitle = "Trajectory based on current policies (2016-2024) vs. 2015 Baseline",
+    y = "Emissions (Mt CO2eq)", x = "",
+    caption = "Shade: 95% CI. Gray line: History. Dashed: Projection. Diamond: 2015 baseline year.",
+    color = "Status", fill = "Status"
+  ) +
+  poster_theme +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+# SAVE HIGH RESOLUTION
+ggsave("Fig5_Predictions_Intervals.png", plot = p_prediction, width = 15, height = 10, dpi = 300)
+
+print(p_prediction)
+```
+
+## FIGURE 6 (ALTERNATIVE): PERFORMANCE MATRIX (Intensity vs. Per Capita)
+
+```{r}
+# 1. PREPARE DATA (We need 1990 and 2024 to see the change)
+df_matrix <- final_database %>%
+  filter(country %in% countries_americas) %>%
+  filter(year %in% c(1990, 2024)) %>%
+  select(country, year, ghg_per_gdp, ghg_per_capita) %>%
+  pivot_wider(names_from = year, values_from = c(ghg_per_gdp, ghg_per_capita))
+
+# Calculate regional averages to draw quadrant lines
+gdp_mean <- mean(final_database$ghg_per_gdp, na.rm=T)
+capita_mean <- mean(final_database$ghg_per_capita, na.rm=T)
+```
+
+```{r}
+# 2. GENERATE SCATTER PLOT WITH ARROWS
+p_matrix <- ggplot(df_matrix) +
+  # Quadrant lines (Regional Average)
+  geom_hline(yintercept = capita_mean, linetype = "dashed", color = "gray60") +
+  geom_vline(xintercept = gdp_mean, linetype = "dashed", color = "gray60") +
+  
+  # CHANGE ARROWS (From 1990 to 2024)
+  geom_segment(aes(x = ghg_per_gdp_1990, y = ghg_per_capita_1990,
+                   xend = ghg_per_gdp_2024, yend = ghg_per_capita_2024,
+                   color = country),
+               arrow = arrow(length = unit(0.3, "cm")), size = 1.2, alpha = 0.8) +
+  
+  # START POINTS (1990) - Small
+  geom_point(aes(x = ghg_per_gdp_1990, y = ghg_per_capita_1990), color = "gray", size = 2) +
+  
+  # END POINTS (2024) - Large
+  geom_point(aes(x = ghg_per_gdp_2024, y = ghg_per_capita_2024, color = country), size = 4) +
+  
+  # LABELS
+  geom_text_repel(aes(x = ghg_per_gdp_2024, y = ghg_per_capita_2024, label = country),
+                  fontface = "bold", size = 4, box.padding = 0.5) +
+  
+  # LOGARITHMIC SCALES (Crucial as USA is very large compared to the rest)
+  scale_x_log10() + 
+  scale_y_log10() +
+  
+  # AESTHETICS
+  theme_bw(base_size = 14) +
+  scale_color_viridis_d(option = "turbo") +
+  labs(
+    title = "Fig 5. Climate Transition Matrix (1990 -> 2024)",
+    subtitle = "Trajectory of Economic Intensity vs. Per Capita Emissions.\n(Arrow pointing down/left = Improvement in Efficiency)",
+    x = "Carbon Intensity (tCO2 / kUSD GDP) [Log Scale]",
+    y = "Per Capita Emissions (tCO2 / hab) [Log Scale]"
+  ) +
+  theme(
+    strip.text = element_text(face = "bold", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "none") +
+  
+  # QUADRANT ANNOTATIONS
+  annotate("text", x = min(df_matrix$ghg_per_gdp_2024), y = max(df_matrix$ghg_per_capita_2024), 
+             label = "HIGH CONSUMPTION\nHIGH EFFICIENCY", color = "gray40", hjust = 0, fontface = "italic") +
+  annotate("text", x = max(df_matrix$ghg_per_gdp_2024), y = min(df_matrix$ghg_per_capita_2024), 
+             label = "LOW CONSUMPTION\nINEFFICIENT", color = "gray40", hjust = 1, fontface = "italic")
+
+# SAVE
+ggsave("Fig6_Quadrant_Matrix.png", plot = p_matrix, width = 10, height = 8, dpi = 300)
+print(p_matrix)
+```
