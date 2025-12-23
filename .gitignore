@@ -1,0 +1,23 @@
+# History files
+.Rhistory
+.RData
+.Ruserdata
+
+# Filter settings
+.Rproj.user/
+
+# Packages and documentation
+.Rapp.history
+.Rhistory
+.RData
+*-Ex.R
+
+# Specific data files (Only if you don't want to share the raw dataset)
+# data/
+# *.csv
+# *.xlsx
+
+# Temporary files
+.Rproj.user/
+.RData
+.Rhistory
