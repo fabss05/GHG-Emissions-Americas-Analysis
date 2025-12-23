@@ -1,11 +1,11 @@
-# GHG Emissions Analysis in the Americas (1990-2024)
+# GHG Emissions Analysis in the Americas (1990-2025)
 
 ![R](https://img.shields.io/badge/R-v4.3%2B-blue?logo=r&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Field](https://img.shields.io/badge/Field-Bioengineering-orange)
 
 ### Description
-R pipeline for analyzing **1990–2024 GHG emissions** in the Americas using **EDGAR v8.0** data. 
+R pipeline for analyzing **1990–2025 GHG emissions** in the Americas using **EDGAR v8.0** data. 
 
 The code evaluates the impact of the Paris Agreement (2015) by implementing data orchestration, K-means clustering for regional heterogeneity, and multivariate OLS regressions. Features include non-parametric testing, sectoral analysis, and 2030 inertial projections with 95% confidence intervals.
 
